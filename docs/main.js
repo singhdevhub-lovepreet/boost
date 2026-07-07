@@ -1,128 +1,160 @@
-const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const terminal = document.querySelector('[data-terminal]');
-const terminalBody = document.querySelector('.terminal-body');
-const terminalCaption = document.querySelector('[data-terminal-caption]');
-const copyButton = document.getElementById('copy-button');
-const copyLabel = document.getElementById('copy-label');
-const copyTooltip = document.getElementById('copy-tooltip');
-const installCode = document.getElementById('install-code');
-const dotGrid = document.getElementById('dot-grid');
-const revealTargets = document.querySelectorAll('.reveal');
-const terminalStateDurations = { a: 3500, b: 3500 };
-let terminalTimer = null;
-let terminalRunning = false;
-let terminalVisible = false;
-let copyResetTimer = null;
+(() => {
+  'use strict';
 
-if (dotGrid) {
-  for (let i = 0; i < 52; i += 1) {
-    const dot = document.createElement('span');
-    dot.className = 'dot';
-    dot.style.left = `${Math.random() * 100}%`;
-    dot.style.top = `${Math.random() * 100}%`;
-    dot.style.opacity = `${0.04 + Math.random() * 0.05}`;
-    dot.style.setProperty('--dur', `${18 + Math.random() * 16}s`);
-    dot.style.animationDelay = `${-Math.random() * 20}s`;
-    dotGrid.appendChild(dot);
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ── Reveal on scroll ──────────────────────────────────────────── */
+  const revealEls = document.querySelectorAll('.reveal');
+
+  if ('IntersectionObserver' in window) {
+    const revealObs = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-visible');
+          revealObs.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.15 });
+
+    revealEls.forEach((el) => revealObs.observe(el));
+  } else {
+    revealEls.forEach((el) => el.classList.add('is-visible'));
   }
-}
 
-const setVisible = (entry) => entry.target.classList.add('is-visible');
+  /* ── Terminal animation ────────────────────────────────────────── */
+  const terminalEl = document.getElementById('terminal');
+  const terminalBody = document.querySelector('.terminal-body');
+  const caption = document.getElementById('terminal-caption');
+  const typeTarget = document.getElementById('typewriter-target');
+  const typewriterCursor = document.getElementById('typewriter-cursor');
 
-if ('IntersectionObserver' in window) {
-  const revealObserver = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        setVisible(entry);
-        revealObserver.unobserve(entry.target);
-      }
-    });
-  }, { threshold: 0.2 });
+  const CAPTIONS = {
+    a: 'three panes, three branches \u2014 no organization yet.',
+    typing: 'developer switches to the feature branch worktree\u2026',
+    b: 'same branch \u2192 same column. color-coded. automatic.'
+  };
 
-  revealTargets.forEach((target) => revealObserver.observe(target));
-} else {
-  revealTargets.forEach((target) => target.classList.add('is-visible'));
-}
+  const TYPE_CMD = 'cd ../myapp-feature-login';
+  const CHAR_DELAY = 55;
+  const PAUSE_BEFORE_TYPE = 2000;
+  const PAUSE_AFTER_TYPE = 800;
+  const STATE_B_HOLD = 4000;
+  const FADE_PAUSE = 600;
 
-const clearTerminalTimer = () => {
-  if (terminalTimer) {
-    clearTimeout(terminalTimer);
-    terminalTimer = null;
-  }
-};
+  let running = false;
+  let visible = false;
+  let loopTimer = null;
 
-const applyTerminalState = (state) => {
-  if (!terminalBody) return;
-  terminalBody.dataset.terminalState = state;
-  if (terminalCaption) {
-    terminalCaption.textContent = state === 'a'
-      ? 'Three panes, three branches — no organization.'
-      : 'Same branch → panes link into one column. Others stay separate.';
-  }
-};
+  const wait = (ms) => new Promise((r) => { loopTimer = setTimeout(r, ms); });
 
-const scheduleTerminal = (state) => {
-  clearTerminalTimer();
-  applyTerminalState(state);
-  if (!terminalRunning || prefersReducedMotion || !terminalVisible) return;
-  const nextState = state === 'a' ? 'b' : 'a';
-  terminalTimer = window.setTimeout(() => scheduleTerminal(nextState), terminalStateDurations[state]);
-};
+  const setCaption = (key) => {
+    if (caption) caption.textContent = CAPTIONS[key] || '';
+  };
 
-const startTerminal = () => {
-  if (terminalRunning) return;
-  terminalRunning = true;
-  clearTerminalTimer();
-  if (prefersReducedMotion) {
-    applyTerminalState('b');
-    return;
-  }
-  scheduleTerminal('a');
-};
+  const setState = (s) => {
+    if (terminalBody) terminalBody.dataset.state = s;
+  };
 
-const stopTerminal = () => {
-  terminalRunning = false;
-  clearTerminalTimer();
-};
-
-if (terminal && 'IntersectionObserver' in window) {
-  const terminalObserver = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        terminalVisible = true;
-        startTerminal();
-      } else {
-        terminalVisible = false;
-        stopTerminal();
-      }
-    });
-  }, { threshold: 0.35 });
-
-  terminalObserver.observe(terminal);
-} else {
-  terminalVisible = true;
-  startTerminal();
-}
-
-if (copyButton && installCode) {
-  copyButton.addEventListener('click', async () => {
-    const text = installCode.textContent || '';
-
-    try {
-      await navigator.clipboard.writeText(text);
-      if (copyLabel) copyLabel.textContent = 'Copied!';
-      if (copyTooltip) copyTooltip.classList.add('is-visible');
-      window.clearTimeout(copyResetTimer);
-      copyResetTimer = window.setTimeout(() => {
-        if (copyLabel) copyLabel.textContent = 'Copy';
-        if (copyTooltip) copyTooltip.classList.remove('is-visible');
-      }, 2000);
-    } catch (error) {
-      if (copyLabel) copyLabel.textContent = 'Copy failed';
-      window.clearTimeout(copyResetTimer);
-      copyResetTimer = window.setTimeout(() => {
-        if (copyLabel) copyLabel.textContent = 'Copy';
-      }, 2000);
+  const typewrite = async (text) => {
+    if (!typeTarget) return;
+    typeTarget.textContent = '';
+    if (typewriterCursor) typewriterCursor.style.display = 'inline-block';
+    for (let i = 0; i < text.length; i++) {
+      if (!running) return;
+      typeTarget.textContent += text[i];
+      await wait(CHAR_DELAY + Math.random() * 25);
     }
-  });
-}
+  };
+
+  const clearTypewriter = () => {
+    if (typeTarget) typeTarget.textContent = '';
+    if (typewriterCursor) typewriterCursor.style.display = 'none';
+  };
+
+  const runLoop = async () => {
+    while (running && visible) {
+      // Phase 1: Show ungrouped state
+      setState('a');
+      setCaption('a');
+      clearTypewriter();
+      await wait(PAUSE_BEFORE_TYPE);
+      if (!running || !visible) break;
+
+      // Phase 2: Typewriter
+      setCaption('typing');
+      await typewrite(TYPE_CMD);
+      if (!running || !visible) break;
+      await wait(PAUSE_AFTER_TYPE);
+      if (!running || !visible) break;
+
+      // Phase 3: Transition to grouped
+      setState('b');
+      setCaption('b');
+      clearTypewriter();
+      await wait(STATE_B_HOLD);
+      if (!running || !visible) break;
+
+      // Phase 4: Brief pause before loop
+      await wait(FADE_PAUSE);
+    }
+  };
+
+  const startTerminal = () => {
+    if (running) return;
+    running = true;
+    if (prefersReducedMotion) {
+      setState('b');
+      setCaption('b');
+      clearTypewriter();
+      return;
+    }
+    runLoop();
+  };
+
+  const stopTerminal = () => {
+    running = false;
+    if (loopTimer) { clearTimeout(loopTimer); loopTimer = null; }
+  };
+
+  if (terminalEl && 'IntersectionObserver' in window) {
+    const termObs = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          visible = true;
+          startTerminal();
+        } else {
+          visible = false;
+          stopTerminal();
+        }
+      });
+    }, { threshold: 0.3 });
+    termObs.observe(terminalEl);
+  } else {
+    visible = true;
+    startTerminal();
+  }
+
+  /* ── Copy button ───────────────────────────────────────────────── */
+  const copyBtn = document.getElementById('copy-btn');
+  const installCode = document.getElementById('install-code');
+  let copyTimer = null;
+
+  if (copyBtn && installCode) {
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(installCode.textContent || '');
+        copyBtn.textContent = 'copied';
+        copyBtn.classList.add('copied');
+        clearTimeout(copyTimer);
+        copyTimer = setTimeout(() => {
+          copyBtn.textContent = 'copy';
+          copyBtn.classList.remove('copied');
+        }, 2000);
+      } catch {
+        copyBtn.textContent = 'failed';
+        clearTimeout(copyTimer);
+        copyTimer = setTimeout(() => { copyBtn.textContent = 'copy'; }, 2000);
+      }
+    });
+  }
+})();
