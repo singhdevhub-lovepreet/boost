@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+#
+# tmux-branch-group — group panes of the same git branch into ONE COLUMN per branch,
+# inside a single window (never a separate window/tab). Same branch -> panes stacked
+# in a column; different branches -> columns side by side. Each pane wears its branch
+# label on the top border. Regroups automatically when a pane's shell changes branch.
+#
+# Built for git worktrees: repo identity is the shared .git (common dir), so worktrees
+# of one repo group by branch rather than by folder.
+#
+# Usage:
+#   tmux-branch-group             (re)group the CURRENT pane's window from live cwds
+#   tmux-branch-group --sweep     regroup every window in the current session
+#   tmux-branch-group --print [dir]   print the label a dir maps to (debug)
+#
+# Env:
+#   TBP_LAYOUT_HELPER   explicit path to layout.py (else auto-resolved)
+#
+set -u
+[ -n "${TMUX:-}" ] || exit 0
+
+PALETTE=(39 208 76 170 214 45 141 220 203 117 180 156 209 84 111)
+
+# --- resolve layout.py: env override, repo layout (../lib), then installed location ---
+SELF="${BASH_SOURCE[0]:-$0}"
+SELF_DIR=$(cd "$(dirname "$SELF")" && pwd)
+HELPER=""
+for cand in \
+  "${TBP_LAYOUT_HELPER:-}" \
+  "$SELF_DIR/../lib/layout.py" \
+  "$SELF_DIR/layout.py" \
+  "$HOME/.config/tmux-branch-panes/layout.py"; do
+  [ -n "$cand" ] && [ -f "$cand" ] && { HELPER="$cand"; break; }
+done
+
+# --- locate python3 (PATH can be minimal under tmux `run-shell`) ---
+PY=$(command -v python3 2>/dev/null || true)
+if [ -z "$PY" ]; then
+  for c in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+    [ -x "$c" ] && { PY="$c"; break; }
+  done
+fi
+
+# "repo/branch" for a git worktree, else the directory's basename
+compute_label() {
+  local dir="$1" common repo branch
+  if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+     && common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+    repo=$(basename "$(dirname "$common")")
+    branch=$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=""
+    [ -n "$branch" ] || branch="detached-$(git -C "$dir" rev-parse --short HEAD 2>/dev/null)"
+    printf '%s/%s' "$repo" "$branch"
+  else
+    printf '%s' "$(basename "$dir")"
+  fi
+}
+
+color_for() {
+  local h; h=$(printf '%s' "$1" | cksum | cut -d' ' -f1)
+  printf 'colour%s' "${PALETTE[$(( h % ${#PALETTE[@]} ))]}"
+}
+
+# label one pane in place and cache the label:  $1 pane id  $2 dir  (prints the label)
+label_pane() {
+  local pane="$1" dir="$2" label
+  label=$(compute_label "$dir")
+  tmux select-pane -t "$pane" -T "$label" >/dev/null 2>&1
+  tmux set-option -p -t "$pane" @tbp_color "$(color_for "$label")" >/dev/null 2>&1
+  tmux set-option -p -t "$pane" @tbp_label "$label" >/dev/null 2>&1
+  printf '%s' "$label"
+}
+
+# regroup one window into branch columns:  $1 window id   $2 ="all" to recompute labels
+regroup_window() {
+  local win="$1" mode="${2:-}" W H feed="" sig="" count=0 pane ppath label lay oldsig
+  read -r W H < <(tmux display-message -p -t "$win" '#{window_width} #{window_height}')
+
+  while IFS=$'\t' read -r pane ppath; do
+    if [ "$mode" = all ]; then
+      label=$(label_pane "$pane" "$ppath")
+    else
+      label=$(tmux show-options -p -v -t "$pane" @tbp_label 2>/dev/null || true)
+      [ -n "$label" ] || label=$(label_pane "$pane" "$ppath")
+    fi
+    feed+="${pane#%}"$'\t'"$label"$'\n'
+    sig+="${pane#%}:$label|"
+    count=$((count + 1))
+  done < <(tmux list-panes -t "$win" -F '#{pane_id}	#{pane_current_path}')
+
+  # only relayout when the grouping actually changed (preserves manual resizing)
+  oldsig=$(tmux show-options -w -v -t "$win" @tbp_sig 2>/dev/null || true)
+  [ "$sig" = "$oldsig" ] && return 0
+  tmux set-option -w -t "$win" @tbp_sig "$sig" >/dev/null 2>&1
+  [ "$count" -lt 2 ] && return 0            # nothing to arrange
+
+  if [ -n "$PY" ] && [ -n "$HELPER" ]; then
+    lay=$(printf '%s %s\n%s' "$W" "$H" "$feed" | "$PY" "$HELPER" 2>/dev/null)
+  else
+    lay=FALLBACK
+  fi
+  if [ -n "$lay" ] && [ "$lay" != FALLBACK ]; then
+    tmux select-layout -t "$win" "$lay" >/dev/null 2>&1 \
+      || tmux select-layout -t "$win" tiled >/dev/null 2>&1
+  else
+    tmux select-layout -t "$win" tiled >/dev/null 2>&1
+  fi
+}
+
+case "${1:-}" in
+  --sweep)
+    while read -r w; do regroup_window "$w" all; done \
+      < <(tmux list-windows -F '#{window_id}')
+    ;;
+  --print)
+    compute_label "${2:-$PWD}"; echo
+    ;;
+  -h|--help)
+    sed -n '2,20p' "$0" | sed 's/^#\{0,1\} \{0,1\}//'
+    ;;
+  *)
+    # a pane's shell moved: relabel THIS pane ($TMUX_PANE is the running shell's own
+    # pane; #{pane_id} would give the active pane instead), then regroup its window.
+    pane="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}"
+    label_pane "$pane" "$PWD" >/dev/null
+    regroup_window "$(tmux display-message -p -t "$pane" '#{window_id}')"
+    ;;
+esac

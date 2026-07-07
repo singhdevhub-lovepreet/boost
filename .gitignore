@@ -1,0 +1,4 @@
+# nothing to build; keep the tree clean
+*.pyc
+__pycache__/
+.DS_Store
