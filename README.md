@@ -2,6 +2,10 @@
 
 A collection of productivity tools for developers. Each tool lives in its own directory and can be installed independently.
 
+## Website
+
+The Boost marketing site is published at [https://singhdevhub-lovepreet.github.io/boost/](https://singhdevhub-lovepreet.github.io/boost/). The source for the site lives in [`docs/`](docs/).
+
 ## Features
 
 ### [tmux-authadjust](./tmux-authadjust/)
